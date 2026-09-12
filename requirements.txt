@@ -4,4 +4,4 @@ numpy
 yfinance
 feedparser
 requests
-neo-api-client
+kotakneoapi

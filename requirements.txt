@@ -2,4 +2,3 @@ streamlit
 pandas
 numpy
 yfinance
-neo-api-client

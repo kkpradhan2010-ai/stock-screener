@@ -3,16 +3,10 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime
+import concurrent.futures
 import warnings
 
 warnings.filterwarnings('ignore')
-
-# Official Kotak Neo SDK Import
-try:
-    from neo_api_client import NeoAPI
-    KOTAK_SDK_AVAILABLE = True
-except ImportError:
-    KOTAK_SDK_AVAILABLE = False
 
 # ==========================================
 # 1. UI CONFIGURATION & STYLING
@@ -40,31 +34,43 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">⚡ ALPHA-QUANT 11-LAYER INSTITUTIONAL ENGINE</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Regime | News | Sector | Daily EMA | 15m ORB | Volume | VWAP | RS | Kotak Live OI | Option Trap | Dynamic ATR</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Regime | 150 F&O Universe | Daily EMA | 15m ORB | Volume | VWAP | Relative Strength | Anti-Trap | Dynamic ATR</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 2. KOTAK NEO GATEWAY CONNECTION
+# 2. 150 HIGH-LIQUID F&O UNIVERSE
 # ==========================================
-kotak_status = "Standard Mode"
-client = None
-
-if KOTAK_SDK_AVAILABLE and "kotak" in st.secrets:
-    try:
-        cfg = st.secrets["kotak"]
-        client = NeoAPI(
-            consumer_key=cfg.get("consumer_key", ""),
-            consumer_secret=cfg.get("consumer_secret", ""),
-            environment='prod'
-        )
-        client.login(
-            mobilenumber=cfg.get("mobile", ""),
-            password=cfg.get("password", "")
-        )
-        kotak_status = "Kotak Live Connected"
-    except Exception:
-        kotak_status = "Kotak Auth Pending"
-else:
-    kotak_status = "Standard Mode"
+INSTITUTIONAL_UNIVERSE = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "SBIN.NS", "BHARTIARTL.NS", "TECHM.NS", "LT.NS", "TATASTEEL.NS",
+    "AXISBANK.NS", "KOTAKBANK.NS", "MARUTI.NS", "TATAMOTORS.NS", "BAJFINANCE.NS",
+    "HINDUNILVR.NS", "ITC.NS", "SUNPHARMA.NS", "WIPRO.NS", "HCLTECH.NS",
+    "ADANIENT.NS", "ADANIPORTS.NS", "ASIANPAINT.NS", "BAJAJ-AUTO.NS", "BAJAJFINSV.NS",
+    "BPCL.NS", "BRITANNIA.NS", "CIPLA.NS", "COALINDIA.NS", "DIVISLAB.NS",
+    "DRREDDY.NS", "EICHERMOT.NS", "GRASIM.NS", "HDFCLIFE.NS", "HEROMOTOCO.NS",
+    "HINDALCO.NS", "INDUSINDBK.NS", "JSWSTEEL.NS", "M&M.NS", "NESTLEIND.NS",
+    "NTPC.NS", "ONGC.NS", "POWERGRID.NS", "SBILIFE.NS", "SHREECEM.NS",
+    "TATACONSUM.NS", "TITAN.NS", "ULTRACEMCO.NS", "UPL.NS", "APOLLOHOSP.NS",
+    "AARTIIND.NS", "ABB.NS", "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS",
+    "AMBUJACEM.NS", "ASHOKLEY.NS", "ASTRAL.NS", "AUBANK.NS", "AUROPHARMA.NS",
+    "BALKRISIND.NS", "BANDHANBNK.NS", "BANKBARODA.NS", "BATAINDIA.NS", "BEL.NS",
+    "BERGEPAINT.NS", "BHARATFORG.NS", "BHEL.NS", "BIOCON.NS", "BOSCHLTD.NS",
+    "CANBK.NS", "CANFINHOME.NS", "CHAMBLFERT.NS", "CHOLAFIN.NS", "COFORGE.NS",
+    "COLPAL.NS", "CONCOR.NS", "COROMANDEL.NS", "CROMPTON.NS", "CUB.NS",
+    "CUMMINSIND.NS", "DABUR.NS", "DALBHARAT.NS", "DEEPAKNTR.NS", "DELHIVERY.NS",
+    "DIXON.NS", "DLF.NS", "ESCORTS.NS", "EXIDEIND.NS", "FEDERALBNK.NS",
+    "GAIL.NS", "GLENMARK.NS", "GMRINFRA.NS", "GNFC.NS", "GODREJCP.NS",
+    "GODREJPROP.NS", "GRANULES.NS", "GUJGASLTD.NS", "HAL.NS", "HAVELLS.NS",
+    "HINDCOPPER.NS", "ICICIGI.NS", "ICICIPRULI.NS", "IDEA.NS", "IDFCFIRSTB.NS",
+    "IEX.NS", "IGL.NS", "INDHOTEL.NS", "INDIACEM.NS", "INDIAMART.NS",
+    "INDIGO.NS", "INDUSTOWER.NS", "INTELLECT.NS", "IPCALAB.NS", "JINDALSTEL.NS",
+    "JKCEMENT.NS", "JSL.NS", "JUBLFOOD.NS", "L&TFH.NS", "LALPATHLAB.NS",
+    "LAURUSLABS.NS", "LICHSGFIN.NS", "LTIM.NS", "LTTS.NS", "LUPIN.NS",
+    "MANAPPURAM.NS", "MARICO.NS", "MCDOWELL-N.NS", "MCX.NS", "METROPOLIS.NS",
+    "MFSL.NS", "MGL.NS", "MOTHERSON.NS", "MPHASIS.NS", "MRF.NS",
+    "MUTHOOTFIN.NS", "NATIONALUM.NS", "NAUKRI.NS", "NAVINFLUOR.NS", "NMDC.NS",
+    "OBEROIRLTY.NS", "OFSS.NS", "PAGEIND.NS", "PEL.NS", "PERSISTENT.NS",
+    "PETRONET.NS", "PFC.NS", "PIDILITIND.NS", "PIIND.NS", "PNB.NS"
+]
 
 # ==========================================
 # 3. NIFTY MACRO REGIME ENGINE
@@ -93,31 +99,22 @@ def get_nifty_regime():
 
 regime_title, nifty_pct, macro_bias = get_nifty_regime()
 
-# Status Bar
 m1, m2, m3, m4 = st.columns(4)
 with m1:
     vclass = "metric-val-bull" if nifty_pct > 0.15 else ("metric-val-bear" if nifty_pct < -0.15 else "metric-val-neu")
     st.markdown(f'<div class="metric-card"><div class="metric-title">NIFTY REGIME</div><div class="{vclass}">{regime_title} ({nifty_pct:+.2f}%)</div></div>', unsafe_allow_html=True)
 with m2:
-    st.markdown('<div class="metric-card"><div class="metric-title">NEWS BLACKLIST</div><div class="metric-val-neu">0 Stocks Excluded</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title">SCAN UNIVERSE</div><div class="metric-val-neu">{len(INSTITUTIONAL_UNIVERSE)} F&O Stocks</div></div>', unsafe_allow_html=True)
 with m3:
-    st.markdown('<div class="metric-card"><div class="metric-title">ACTIVE LAYERS</div><div class="metric-val-bull">11-Layer Institutional</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-card"><div class="metric-title">CONFIRMATION FILTER</div><div class="metric-val-bull">Score 70+ Cutoff</div></div>', unsafe_allow_html=True)
 with m4:
-    gw_class = "metric-val-bull" if "Connected" in kotak_status else "metric-val-neu"
-    st.markdown(f'<div class="metric-card"><div class="metric-title">BROKER GATEWAY</div><div class="{gw_class}">{kotak_status}</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-card"><div class="metric-title">OUTPUT CONSTRAINT</div><div class="metric-val-bull">Strict Top 1-2</div></div>', unsafe_allow_html=True)
 
 st.write("")
 
 # ==========================================
-# 4. UNIVERSE & QUANT CALCULATION ENGINE
+# 4. HIGH-CONVICTION QUANT ENGINE
 # ==========================================
-INSTITUTIONAL_UNIVERSE = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
-    "SBIN.NS", "BHARTIARTL.NS", "TECHM.NS", "LT.NS", "TATASTEEL.NS",
-    "AXISBANK.NS", "KOTAKBANK.NS", "MARUTI.NS", "TATAMOTORS.NS", "BAJFINANCE.NS",
-    "HINDUNILVR.NS", "ITC.NS", "SUNPHARMA.NS", "WIPRO.NS", "HCLTECH.NS"
-]
-
 def calculate_atr(df, period=14):
     high = df['High']
     low = df['Low']
@@ -165,23 +162,25 @@ def process_single_stock(ticker, market_regime, n_pct):
         pullback_from_high = ((day_high - ltp) / day_high) * 100 if day_high > 0 else 0
         clean_sym = ticker.replace(".NS", "")
 
-        # Volume threshold
-        if vol_surge < 1.2:
+        # हार्ड वॉल्यूम फ़िल्टर: कम से कम 1.3x वॉल्यूम जरूरी
+        if vol_surge < 1.3:
             return None
 
-        # --- SHORT ENTRY WITH ANTI-TRAP DEFENSE ---
+        # ----------------- SHORT SETUP (STRICT ZERO-TRAP) -----------------
         if market_regime != "BULLISH":
-            if (ltp < vwap) and (ltp <= orb_low) and (bounce_from_low <= 0.45):
-                if last['Close'] <= last['Open']:
+            if (ltp < vwap) and (ltp <= orb_low) and (bounce_from_low <= 0.40):
+                if last['Close'] <= last['Open']:  # Red confirmation
                     score = 0
-                    if rel_strength < -0.5: score += 30
-                    if vol_surge >= 2.0: score += 25
-                    elif vol_surge >= 1.5: score += 15
-                    if ((vwap - ltp) / vwap) * 100 >= 0.4: score += 20
+                    if rel_strength < -1.0: score += 30
+                    elif rel_strength < -0.5: score += 20
+                    if vol_surge >= 2.5: score += 25
+                    elif vol_surge >= 1.8: score += 15
+                    if ((vwap - ltp) / vwap) * 100 >= 0.5: score += 20
                     if ltp < daily_ema20: score += 15
-                    if bounce_from_low <= 0.2: score += 10
+                    if bounce_from_low <= 0.15: score += 10
                     
-                    if score >= 60:
+                    # 70+ स्कोर कटऑफ (केवल अल्ट्रा-हाई प्रोबेबिलिटी)
+                    if score >= 70:
                         sl = round(max(vwap, ltp + (1.2 * atr)), 2)
                         risk = sl - ltp
                         t1 = round(ltp - (1.5 * risk), 2)
@@ -200,19 +199,21 @@ def process_single_stock(ticker, market_regime, n_pct):
                             "raw_score": score
                         }
 
-        # --- BUY ENTRY ---
+        # ----------------- BUY SETUP (STRICT ZERO-TRAP) -----------------
         if market_regime != "BEARISH":
-            if (ltp > vwap) and (ltp >= orb_high) and (pullback_from_high <= 0.45):
-                if last['Close'] >= last['Open']:
+            if (ltp > vwap) and (ltp >= orb_high) and (pullback_from_high <= 0.40):
+                if last['Close'] >= last['Open']:  # Green confirmation
                     score = 0
-                    if rel_strength > 0.5: score += 30
-                    if vol_surge >= 2.0: score += 25
-                    elif vol_surge >= 1.5: score += 15
-                    if ((ltp - vwap) / vwap) * 100 >= 0.4: score += 20
+                    if rel_strength > 1.0: score += 30
+                    elif rel_strength > 0.5: score += 20
+                    if vol_surge >= 2.5: score += 25
+                    elif vol_surge >= 1.8: score += 15
+                    if ((ltp - vwap) / vwap) * 100 >= 0.5: score += 20
                     if ltp > daily_ema20: score += 15
-                    if pullback_from_high <= 0.2: score += 10
+                    if pullback_from_high <= 0.15: score += 10
                     
-                    if score >= 60:
+                    # 70+ स्कोर कटऑफ
+                    if score >= 70:
                         sl = round(min(vwap, ltp - (1.2 * atr)), 2)
                         risk = ltp - sl
                         t1 = round(ltp + (1.5 * risk), 2)
@@ -235,36 +236,39 @@ def process_single_stock(ticker, market_regime, n_pct):
     return None
 
 # ==========================================
-# 5. SCANNER EXECUTION (TOP 1-2 ONLY)
+# 5. PARALLEL EXECUTION PIPELINE
 # ==========================================
-if st.button("⚡ Scan Institutional Trades (11 Layers)", use_container_width=True, type="primary"):
-    with st.spinner("Analyzing high-probability setups..."):
+if st.button("⚡ Scan 150 Institutional F&O Stocks (High Probability)", use_container_width=True, type="primary"):
+    with st.spinner("Scanning 150 F&O stocks with 11-Layer Institutional Pipeline..."):
         trades = []
-        for symbol in INSTITUTIONAL_UNIVERSE:
-            res = process_single_stock(symbol, macro_bias, nifty_pct)
-            if res:
-                trades.append(res)
+        # Multi-threading for high-speed scanning of 150 stocks
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(process_single_stock, sym, macro_bias, nifty_pct) for sym in INSTITUTIONAL_UNIVERSE]
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res:
+                    trades.append(res)
         
         shorts = sorted([t for t in trades if t['Signal'] == "SHORT"], key=lambda x: x['raw_score'], reverse=True)[:2]
         buys = sorted([t for t in trades if t['Signal'] == "BUY"], key=lambda x: x['raw_score'], reverse=True)[:2]
 
         if macro_bias == "BULLISH":
-            st.info("🛡️ **Safety Guard Active:** Nifty बुलिश है। सभी शॉर्ट ट्रेड्स सख्त रूप से ब्लॉक हैं।")
+            st.info("🛡️ **Safety Layer Active:** Nifty का ट्रेंड **BULLISH** है। शॉर्ट ट्रैप से बचाने के लिए 150 स्टॉक्स में से सभी Sell सिग्नल्स सख्त रूप से ब्लॉक हैं।")
         elif shorts:
-            st.markdown('<div class="short-alert">🔴 CONFIRMED INSTITUTIONAL SHORT (TOP 1-2)</div>', unsafe_allow_html=True)
+            st.markdown('<div class="short-alert">🔴 TOP 1-2 INSTITUTIONAL SHORT (70+ SCORE CONFIRMED)</div>', unsafe_allow_html=True)
             df_s = pd.DataFrame(shorts).drop(columns=['Signal', 'raw_score'])
             st.dataframe(df_s, use_container_width=True, hide_index=True)
-            st.caption("AlphaQuant Engine | Target 1 पर 50% प्रॉफिट बुक करें और SL कॉस्ट पर लाएँ।")
+            st.caption("AlphaQuant Engine | Target 1 पर 50% प्रॉफिट बुक करें और SL कॉस्ट पर ट्रेल करें।")
         else:
-            st.write("कोई हाई-प्रोबेबिलिटी शॉर्ट ट्रेड नहीं मिली।")
+            st.write("150 स्टॉक्स में से कोई शॉर्ट ट्रेड 70+ स्कोर क्राइटेरिया मैच नहीं हुई (No Low-Probability Trades)।")
 
         if buys:
-            st.markdown('<div class="buy-alert">🟢 CONFIRMED INSTITUTIONAL BUY (TOP 1-2)</div>', unsafe_allow_html=True)
+            st.markdown('<div class="buy-alert">🟢 TOP 1-2 INSTITUTIONAL BUY (70+ SCORE CONFIRMED)</div>', unsafe_allow_html=True)
             df_b = pd.DataFrame(buys).drop(columns=['Signal', 'raw_score'])
             st.dataframe(df_b, use_container_width=True, hide_index=True)
-            st.caption("AlphaQuant Engine | Target 1 पर 50% प्रॉफिट बुक करें और SL कॉस्ट पर लाएँ।")
+            st.caption("AlphaQuant Engine | Target 1 पर 50% प्रॉफिट बुक करें और SL कॉस्ट पर ट्रेल करें।")
         elif macro_bias != "BULLISH":
-            st.write("कोई हाई-प्रोबेबिलिटी बाय ट्रेड नहीं मिली।")
+            st.write("150 स्टॉक्स में से कोई बाय ट्रेड 70+ स्कोर क्राइटेरिया मैच नहीं हुई।")
 
 st.markdown("---")
-st.caption("AlphaQuant 11-Layer Institutional Engine | Strict Risk Mitigation Model")
+st.caption("AlphaQuant 11-Layer Institutional Engine | Strict 150 F&O High-Conviction Model")
